@@ -1,15 +1,26 @@
 from fastapi import FastAPI, Response, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 import os
 import httpx
 import re
 
 app = FastAPI()
 
-# Configuração da URL da rádio
-# O usuário informou que este link funciona no VLC e 4G:
-RADIO_URL = "http://45.224.108.166:1923/BZCWmdKZy2GZnJeYodiZ/a"
+# Configuração de CORS para permitir acesso do player
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# URL Completa da rádio (HLS)
+RADIO_URL = "http://45.224.108.166:1923/BZCWmdKZy2GZnJeYodiZ/a/playlist.m3u8"
+# Base da URL para os segmentos (.ts)
+RADIO_BASE = "http://45.224.108.166:1923/BZCWmdKZy2GZnJeYodiZ/a/"
 
 @app.get("/api/health")
 def health_check():
@@ -27,36 +38,33 @@ async def proxy_master():
         try:
             resp = await client.get(RADIO_URL, headers=headers)
             
-            # Se for um redirecionamento ou erro
+            # Se der 404 na playlist.m3u8, tenta o link direto '.../a'
+            if resp.status_code == 404:
+                resp = await client.get(RADIO_URL.replace("/playlist.m3u8", ""), headers=headers)
+
             if resp.status_code >= 400:
                 return Response(content=f"Erro no servidor da rádio: {resp.status_code}", status_code=resp.status_code)
 
             content = resp.text
             
-            # Se não for M3U8, pode ser um stream direto (MP3/AAC)
             if "#EXTM3U" not in content:
-                # Servimos como stream de áudio direto
                 return Response(
                     content=resp.content, 
                     media_type=resp.headers.get("content-type", "audio/mpeg"),
-                    headers={"Access-Control-Allow-Origin": "*", "Accept-Ranges": "bytes"}
+                    headers={"Access-Control-Allow-Origin": "*"}
                 )
 
-            # É uma playlist HLS. Precisamos garantir que a base_url termine com /
-            # Se RADIO_URL é .../a, a base para arquivos relativos dentro dela é .../a/
-            base_url_for_segments = RADIO_URL if RADIO_URL.endswith('/') else f"{RADIO_URL}/"
-            
+            # Reescreve os links
             lines = content.splitlines()
             new_lines = []
             for line in lines:
                 line = line.strip()
                 if line and not line.startswith("#"):
                     if not line.startswith("http"):
-                        # Link relativo. Ex: "chunk.ts" vira "/stream/segment?url=http://.../a/chunk.ts"
-                        full_segment_url = f"{base_url_for_segments}{line}"
+                        # Se RADIO_URL é .../a/playlist.m3u8, o segmento está em .../a/segmento.ts
+                        full_segment_url = f"{RADIO_BASE}{line}"
                         new_lines.append(f"/stream/segment?url={full_segment_url}")
                     else:
-                        # Link absoluto
                         new_lines.append(f"/stream/segment?url={line}")
                 else:
                     new_lines.append(line)
@@ -64,13 +72,9 @@ async def proxy_master():
             return Response(
                 content="\n".join(new_lines), 
                 media_type="application/vnd.apple.mpegurl",
-                headers={
-                    "Access-Control-Allow-Origin": "*",
-                    "Cache-Control": "no-cache"
-                }
+                headers={"Cache-Control": "no-cache"}
             )
         except Exception as e:
-            print(f"Proxy Master Error: {str(e)}")
             return Response(content=f"Error: {str(e)}", status_code=500)
 
 @app.get("/stream/segment")
