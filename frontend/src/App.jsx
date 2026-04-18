@@ -22,30 +22,41 @@ function App() {
   const videoNode = useRef(null);
   const player = useRef(null);
 
-  // Inicializar Video.js
+  // Inicialização do Video.js
   useEffect(() => {
     if (videoNode.current) {
       player.current = videojs(videoNode.current, {
         autoplay: false,
         controls: false,
+        preload: 'auto',
         responsive: true,
         fluid: true,
-        preload: 'auto',
-        liveui: true,
+        html5: {
+          vhs: {
+            overrideNative: true
+          },
+          nativeAudioTracks: false,
+          nativeVideoTracks: false
+        },
         sources: [{
           src: STREAM_URL,
-          // Se for HLS, use 'application/x-mpegURL'. Para MP3/AAC use 'audio/mpeg' ou deixe o videojs detectar
-          type: STREAM_URL.includes('m3u8') ? 'application/x-mpegURL' : 'audio/mpeg'
+          type: 'application/x-mpegURL'
         }]
-      }, () => {
-        console.log('Video.js Player pronto');
       });
 
       player.current.on('error', () => {
         const error = player.current.error();
-        console.error('Erro Video.js:', error);
-        setErrorMessage(`Erro: ${error.message}`);
+        console.error('Video.js Error:', error);
+        setErrorMessage(`Erro ao carregar áudio: ${error ? error.message : 'Desconhecido'}`);
         setIsPlaying(false);
+      });
+
+      player.current.on('waiting', () => {
+        console.log('Player está aguardando buffer...');
+      });
+
+      player.current.on('playing', () => {
+        setErrorMessage('');
       });
     }
 

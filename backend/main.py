@@ -16,44 +16,56 @@ def health_check():
     return {"status": "ok", "radio": "VICFM 91.5"}
 
 # Proxy de Áudio para evitar erros de Mixed Content (HTTP no HTTPS)
-@app.get("/stream/playlist.m3u8")
-async def proxy_playlist():
-    async with httpx.AsyncClient() as client:
+@app.get("/stream/{path:path}")
+async def proxy_stream(path: str):
+    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+        # Define o URL original da rádio
+        target_url = f"{STREAM_BASE_URL}/{path}"
+        
+        # Headers para fingir que é um navegador comum
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": STREAM_BASE_URL
+        }
+
         try:
-            resp = await client.get(f"{STREAM_BASE_URL}/{PLAYLIST_NAME}")
-            content = resp.text
+            # Faz a requisição para o servidor original
+            resp = await client.get(target_url, headers=headers)
             
-            # Reescreve URLs relativas para passarem pelo nosso proxy
-            # Se a linha não começar com # (comentário) e não for uma URL absoluta, é um segmento
-            lines = content.splitlines()
-            new_lines = []
-            for line in lines:
-                if line and not line.startswith("#"):
-                    if not line.startswith("http"):
-                        # É um segmento relativo, redireciona para o nosso proxy de segmento
-                        new_lines.append(f"/stream/{line}")
+            # Se for uma playlist (.m3u8), precisamos reescrever os links internos
+            if path.endswith(".m3u8"):
+                content = resp.text
+                lines = content.splitlines()
+                new_lines = []
+                for line in lines:
+                    if line and not line.startswith("#"):
+                        if not line.startswith("http"):
+                            # É um link relativo, redireciona para o nosso proxy
+                            new_lines.append(f"/stream/{line}")
+                        else:
+                            # É um link absoluto, mantém como está
+                            new_lines.append(line)
                     else:
                         new_lines.append(line)
-                else:
-                    new_lines.append(line)
+                
+                return Response(
+                    content="\n".join(new_lines), 
+                    media_type="application/vnd.apple.mpegurl",
+                    headers={"Access-Control-Allow-Origin": "*"}
+                )
             
-            return Response(content="\n".join(new_lines), media_type="application/vnd.apple.mpegurl")
+            # Se for um segmento de áudio (.ts), faz o stream dos bytes diretamente
+            media_type = "video/MP2T" if path.endswith(".ts") else resp.headers.get("content-type")
+            
+            return Response(
+                content=resp.content,
+                media_type=media_type,
+                headers={"Access-Control-Allow-Origin": "*"}
+            )
+            
         except Exception as e:
+            print(f"Proxy Error: {str(e)}")
             return Response(content=f"Error: {str(e)}", status_code=500)
-
-@app.get("/stream/{segment:path}")
-async def proxy_segment(segment: str):
-    async with httpx.AsyncClient() as client:
-        # Repassa a requisição para o servidor original
-        url = f"{STREAM_BASE_URL}/{segment}"
-        
-        # Streaming da resposta para economizar memória
-        async def stream_response():
-            async with client.stream("GET", url) as resp:
-                async for chunk in resp.aiter_bytes():
-                    yield chunk
-
-        return StreamingResponse(stream_response(), media_type="video/MP2T")
 
 # Servir arquivos estáticos do frontend (após o build)
 # Note: No Docker, vamos copiar o build do frontend para uma pasta acessível.
