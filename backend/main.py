@@ -28,13 +28,19 @@ def health_check():
 
 # Proxy de Áudio
 @app.get("/stream/playlist.m3u8")
-async def proxy_master():
+async def proxy_master(request: Request):
     """Busca a playlist principal da rádio"""
     async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "*/*"
         }
+        
+        # Repassa o header Range se existir (importante para dispositivos Apple)
+        range_header = request.headers.get("range")
+        if range_header:
+            headers["Range"] = range_header
+
         try:
             resp = await client.get(RADIO_URL, headers=headers)
             
@@ -47,21 +53,27 @@ async def proxy_master():
 
             content = resp.text
             
+            # Se não for M3U8, servimos como stream de áudio direto com suporte a Range
             if "#EXTM3U" not in content:
                 return Response(
                     content=resp.content, 
+                    status_code=resp.status_code,
                     media_type=resp.headers.get("content-type", "audio/mpeg"),
-                    headers={"Access-Control-Allow-Origin": "*"}
+                    headers={
+                        "Access-Control-Allow-Origin": "*",
+                        "Accept-Ranges": "bytes",
+                        "Content-Range": resp.headers.get("Content-Range", ""),
+                        "Content-Length": resp.headers.get("Content-Length", "")
+                    }
                 )
 
-            # Reescreve os links
+            # É HLS, reescreve os links
             lines = content.splitlines()
             new_lines = []
             for line in lines:
                 line = line.strip()
                 if line and not line.startswith("#"):
                     if not line.startswith("http"):
-                        # Se RADIO_URL é .../a/playlist.m3u8, o segmento está em .../a/segmento.ts
                         full_segment_url = f"{RADIO_BASE}{line}"
                         new_lines.append(f"/stream/segment?url={full_segment_url}")
                     else:
@@ -72,29 +84,33 @@ async def proxy_master():
             return Response(
                 content="\n".join(new_lines), 
                 media_type="application/vnd.apple.mpegurl",
-                headers={"Cache-Control": "no-cache"}
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Cache-Control": "no-cache"
+                }
             )
         except Exception as e:
             return Response(content=f"Error: {str(e)}", status_code=500)
 
 @app.get("/stream/segment")
-async def proxy_segment(url: str):
-    """Busca um segmento individual (TS ou outra playlist)"""
+async def proxy_segment(url: str, request: Request):
+    """Busca um segmento individual (TS ou outra playlist) com suporte a Range"""
     async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "*/*"
         }
         
+        range_header = request.headers.get("range")
+        if range_header:
+            headers["Range"] = range_header
+        
         try:
             resp = await client.get(url, headers=headers)
             
-            # Se este segmento for na verdade outra playlist (HLS multinível)
             if "#EXTM3U" in resp.text[:100]:
                 content = resp.text
-                # A base para esta nova playlist é a URL dela mesma
                 new_base = url.rsplit('/', 1)[0] + "/"
-                
                 lines = content.splitlines()
                 new_lines = []
                 for line in lines:
@@ -110,14 +126,17 @@ async def proxy_segment(url: str):
 
             return Response(
                 content=resp.content,
+                status_code=resp.status_code,
                 media_type=resp.headers.get("content-type", "video/MP2T"),
                 headers={
                     "Access-Control-Allow-Origin": "*",
+                    "Accept-Ranges": "bytes",
+                    "Content-Range": resp.headers.get("Content-Range", ""),
+                    "Content-Length": resp.headers.get("Content-Length", ""),
                     "Cache-Control": "max-age=3600"
                 }
             )
         except Exception as e:
-            print(f"Proxy Segment Error: {str(e)}")
             return Response(content=f"Error: {str(e)}", status_code=500)
 
 # Servir arquivos estáticos do frontend (após o build)
