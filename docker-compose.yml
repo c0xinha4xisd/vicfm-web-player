@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  vicfm-player:
+    build: .
+    container_name: vicfm-radio-player
+    ports:
+      - "8080:8000"
+    restart: always
+    environment:
+      - NODE_ENV=production
+    labels:
+      - "description=Web Player for VICFM 91.5 Radio"
