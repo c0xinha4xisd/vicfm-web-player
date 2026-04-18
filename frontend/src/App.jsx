@@ -15,9 +15,11 @@ const STREAM_URL = '/stream/playlist.m3u8';
 
 function App() {
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [volume, setVolume] = useState(0.8);
   const [isMuted, setIsMuted] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [debugInfo, setDebugInfo] = useState('');
   
   const videoNode = useRef(null);
   const player = useRef(null);
@@ -49,14 +51,27 @@ function App() {
         console.error('Video.js Error:', error);
         setErrorMessage(`Erro ao carregar áudio: ${error ? error.message : 'Desconhecido'}`);
         setIsPlaying(false);
+        setIsLoading(false);
       });
 
       player.current.on('waiting', () => {
         console.log('Player está aguardando buffer...');
+        setIsLoading(true);
       });
 
       player.current.on('playing', () => {
         setErrorMessage('');
+        setIsLoading(false);
+        setIsPlaying(true);
+      });
+
+      player.current.on('canplay', () => {
+        setIsLoading(false);
+      });
+
+      player.current.on('loadstart', () => {
+        setIsLoading(true);
+        setDebugInfo('Iniciando carregamento...');
       });
     }
 
@@ -76,33 +91,35 @@ function App() {
 
   const togglePlay = () => {
     setErrorMessage('');
-    if (!player.current) return;
+    setDebugInfo('Botão Play pressionado');
+    if (!player.current) {
+      setErrorMessage('Player não inicializado. Tente recarregar a página.');
+      return;
+    }
 
     if (isPlaying) {
       player.current.pause();
       setIsPlaying(false);
     } else {
-      // Para HLS, às vezes é melhor não recarregar o src toda vez se o player já estiver ok
-      // mas se houver erro prévio, recarregamos.
-      if (player.current.error()) {
-        player.current.src({ 
-          src: STREAM_URL, 
-          type: 'application/x-mpegURL' 
-        });
-      }
+      setIsLoading(true);
+      
+      // Sempre tenta recarregar o stream ao dar o play para evitar buffers travados
+      player.current.src({ 
+        src: STREAM_URL, 
+        type: 'application/x-mpegURL' 
+      });
       
       const playPromise = player.current.play();
       if (playPromise !== undefined) {
         playPromise
           .then(() => {
-            setIsPlaying(true);
             console.log("Reprodução HLS iniciada com sucesso");
           })
           .catch(error => {
+            setIsLoading(false);
             if (error.name !== 'AbortError') {
               console.error("Erro ao reproduzir:", error);
-              setIsPlaying(false);
-              setErrorMessage("O navegador bloqueou o áudio ou o stream está inacessível.");
+              setErrorMessage("O navegador bloqueou o áudio. Tente clicar novamente.");
             }
           });
       }
@@ -144,12 +161,17 @@ function App() {
             <div className="flex items-center gap-2">
               <span className={`w-2 h-2 rounded-full ${isPlaying ? 'bg-red-500 animate-ping' : 'bg-neutral-600'}`}></span>
               <p className="text-sm text-neutral-400 font-medium uppercase tracking-widest">
-                {isPlaying ? 'Ao Vivo Agora' : 'Sintonize'}
+                {isLoading ? 'Carregando...' : (isPlaying ? 'Ao Vivo Agora' : 'Sintonize')}
               </p>
             </div>
             {errorMessage && (
               <p className="mt-2 text-[10px] text-red-500 font-medium bg-red-500/10 px-3 py-1 rounded-full border border-red-500/20">
                 {errorMessage}
+              </p>
+            )}
+            {debugInfo && !errorMessage && !isPlaying && (
+              <p className="mt-2 text-[9px] text-neutral-500 italic">
+                {debugInfo}
               </p>
             )}
           </div>
@@ -158,12 +180,19 @@ function App() {
         <div className="w-full flex flex-col items-center gap-8">
           <button 
             onClick={togglePlay}
-            className="w-24 h-24 bg-red-600 hover:bg-red-500 active:scale-95 text-white rounded-full flex items-center justify-center shadow-[0_0_50px_-12px_rgba(220,38,38,0.5)] transition-all duration-300"
+            disabled={isLoading}
+            className={`group relative w-24 h-24 rounded-full flex items-center justify-center transition-all duration-500 ${
+              isPlaying 
+                ? 'bg-neutral-800 text-white hover:bg-neutral-700 shadow-[0_0_30px_rgba(0,0,0,0.3)]' 
+                : 'bg-red-600 text-white hover:bg-red-500 hover:scale-105 shadow-[0_0_50px_rgba(220,38,38,0.3)]'
+            } ${isLoading ? 'opacity-50 cursor-wait' : 'cursor-pointer'}`}
           >
-            {isPlaying ? (
-              <Pause fill="currentColor" size={36} />
+            {isLoading ? (
+              <div className="w-8 h-8 border-4 border-white/20 border-t-white rounded-full animate-spin"></div>
+            ) : isPlaying ? (
+              <Pause className="w-10 h-10 fill-current" />
             ) : (
-              <Play fill="currentColor" size={36} className="ml-1" />
+              <Play className="w-10 h-10 fill-current translate-x-1" />
             )}
           </button>
 
