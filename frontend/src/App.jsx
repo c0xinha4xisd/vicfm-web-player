@@ -222,7 +222,7 @@ function App() {
           {errorMessage && (
             <div className="flex flex-col items-center gap-4 animate-in fade-in zoom-in duration-300">
               <a 
-                href="http://45.224.108.166:1923/BZCWmdKZy2GZnJeYodiZ/a" 
+                href="http://45.224.108.166:1923/BZCWmdKZy2GZnJeYodiZ/a/playlist.m3u8" 
                 target="_blank" 
                 rel="noopener noreferrer"
                 className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all border border-white/5"
