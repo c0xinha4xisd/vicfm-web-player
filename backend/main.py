@@ -17,24 +17,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# URL Completa da rádio (HLS)
-RADIO_URL = "http://45.224.108.166:1923/BZCWmdKZy2GZnJeYodiZ/a/playlist.m3u8"
-# Base da URL para os segmentos (.ts)
-RADIO_BASE = "http://45.224.108.166:1923/BZCWmdKZy2GZnJeYodiZ/a/"
+# URL da rádio fornecida pelo usuário
+RADIO_URL = "http://45.224.108.166:1923/BZCWmdKZy2GZnJeYodiZ/a"
 
 @app.get("/api/health")
 def health_check():
     return {"status": "ok", "radio": "VICFM 91.5"}
 
-# Proxy de Áudio
+# Proxy de Áudio Universal
 @app.get("/stream/playlist.m3u8")
 async def proxy_master(request: Request):
-    """Busca a playlist principal da rádio com depuração aprimorada"""
+    """Busca o stream da rádio e decide se serve como HLS ou Stream Direto"""
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "*/*",
-            "Connection": "keep-alive"
+            "Accept": "*/*"
         }
         
         range_header = request.headers.get("range")
@@ -42,72 +39,64 @@ async def proxy_master(request: Request):
             headers["Range"] = range_header
 
         try:
-            # Tenta a URL principal
-            print(f"DEBUG: Tentando acessar {RADIO_URL}")
+            # Faz a requisição inicial para a rádio
             resp = await client.get(RADIO_URL, headers=headers)
             
-            # Fallback se der 404
-            if resp.status_code == 404:
-                fallback_url = RADIO_URL.replace("/playlist.m3u8", "")
-                print(f"DEBUG: 404 detectado, tentando fallback: {fallback_url}")
-                resp = await client.get(fallback_url, headers=headers)
-
             if resp.status_code >= 400:
-                print(f"DEBUG: Erro do servidor da rádio: {resp.status_code}")
-                return Response(content=f"Erro no servidor da rádio: {resp.status_code}", status_code=resp.status_code)
+                return Response(content=f"Erro na rádio: {resp.status_code}", status_code=resp.status_code)
 
-            # Verifica o tipo de conteúdo
             content_type = resp.headers.get("content-type", "").lower()
-            content = resp.text
             
-            # Se for um stream direto (MP3/AAC) ou se não houver tags de playlist
-            if "#EXTM3U" not in content:
-                print(f"DEBUG: Detectado stream direto (não HLS). Type: {content_type}")
-                return StreamingResponse(
-                    iter([resp.content]),
-                    status_code=resp.status_code,
-                    media_type=content_type or "audio/mpeg",
-                    headers={
-                        "Access-Control-Allow-Origin": "*",
-                        "Accept-Ranges": "bytes",
-                        "Content-Range": resp.headers.get("Content-Range", ""),
-                        "Content-Length": resp.headers.get("Content-Length", ""),
-                        "Cache-Control": "no-cache"
-                    }
-                )
-
-            # É HLS - Reescreve com inteligência
-            print("DEBUG: Detectada playlist HLS. Reescrevendo links...")
-            lines = content.splitlines()
-            new_lines = []
-            for line in lines:
-                line = line.strip()
-                if not line: continue
+            # Se for uma playlist HLS (contém a tag #EXTM3U)
+            if b"#EXTM3U" in resp.content[:100]:
+                content = resp.text
+                lines = content.splitlines()
+                new_lines = []
+                # A base para links relativos é a URL da rádio com uma barra no final
+                base_url = RADIO_URL if RADIO_URL.endswith('/') else f"{RADIO_URL}/"
                 
-                if not line.startswith("#"):
-                    if line.startswith("http"):
-                        # URL absoluta - encadeia no proxy
-                        new_lines.append(f"/stream/segment?url={line}")
+                for line in lines:
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        if not line.startswith("http"):
+                            new_lines.append(f"/stream/segment?url={base_url}{line}")
+                        else:
+                            new_lines.append(f"/stream/segment?url={line}")
                     else:
-                        # URL relativa - limpa barras extras e monta
-                        clean_path = line.lstrip('/')
-                        full_url = f"{RADIO_BASE}{clean_path}"
-                        new_lines.append(f"/stream/segment?url={full_url}")
-                else:
-                    new_lines.append(line)
+                        new_lines.append(line)
+                
+                return Response(
+                    content="\n".join(new_lines),
+                    media_type="application/vnd.apple.mpegurl",
+                    headers={"Access-Control-Allow-Origin": "*", "Cache-Control": "no-cache"}
+                )
             
-            return Response(
-                content="\n".join(new_lines), 
-                media_type="application/vnd.apple.mpegurl",
+            # Caso contrário, trata como um stream de áudio contínuo (MP3/AAC)
+            def stream_generator():
+                #yield resp.content # Envia o que já baixamos
+                # Infelizmente o httpx não permite continuar um stream de uma resposta já lida
+                # Então iniciamos um novo stream direto para o usuário
+                pass
+
+            # Para streams diretos, usamos uma nova conexão de streaming
+            async def direct_streamer():
+                async with client.stream("GET", RADIO_URL, headers=headers) as s:
+                    async for chunk in s.aiter_bytes(chunk_size=1024 * 8):
+                        yield chunk
+
+            return StreamingResponse(
+                direct_streamer(),
+                media_type=content_type or "audio/mpeg",
                 headers={
                     "Access-Control-Allow-Origin": "*",
+                    "Accept-Ranges": "bytes",
                     "Cache-Control": "no-cache",
-                    "X-Debug-Source": "HLS-Proxy"
+                    "Connection": "keep-alive"
                 }
             )
+            
         except Exception as e:
-            print(f"DEBUG: Erro crítico no Proxy Master: {str(e)}")
-            return Response(content=f"Error: {str(e)}", status_code=500)
+            return Response(content=f"Proxy Error: {str(e)}", status_code=500)
 
 @app.get("/stream/segment")
 async def proxy_segment(url: str, request: Request):

@@ -109,10 +109,9 @@ function App() {
     } else {
       setIsLoading(true);
       
-      // Sempre tenta recarregar o stream ao dar o play para evitar buffers travados
+      // Tenta carregar sem forçar o tipo para permitir auto-detecção (HLS ou MP3)
       player.current.src({ 
-        src: STREAM_URL, 
-        type: 'application/x-mpegURL' 
+        src: STREAM_URL
       });
       
       const playPromise = player.current.play();
