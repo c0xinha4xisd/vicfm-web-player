@@ -5,10 +5,24 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 import httpx
 import re
+import asyncio
+from contextlib import asynccontextmanager
 
-app = FastAPI()
+# Cliente HTTP Global para reutilizar conexões e evitar erros 502/Timeout
+http_client = httpx.AsyncClient(
+    timeout=httpx.Timeout(30.0, connect=10.0),
+    follow_redirects=True,
+    limits=httpx.Limits(max_connections=100, max_keepalive_connections=20)
+)
 
-# Configuração de CORS para permitir acesso do player
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    await http_client.aclose()
+
+app = FastAPI(lifespan=lifespan)
+
+# Configuração de CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,7 +31,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# URL exata da rádio (Playlist Mestre)
+# URL exata da rádio
 RADIO_URL = "http://45.224.108.166:1923/BZCWmdKZy2GZnJeYodiZ/a/playlist.m3u8"
 
 @app.get("/api/health")
@@ -27,39 +41,22 @@ def health_check():
 # Proxy de Áudio Universal
 @app.get("/stream/playlist.m3u8")
 async def proxy_master(request: Request):
-    """Busca o stream da rádio com múltiplas tentativas de URL"""
-    async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "*/*",
-            "Icy-MetaData": "1"
-        }
+    """Busca o stream da rádio com reaproveitamento de conexão"""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "*/*"
+    }
+    
+    try:
+        resp = await http_client.get(RADIO_URL, headers=headers)
         
-        # Lista de URLs para tentar em ordem (baseada no novo link completo)
-        urls_to_try = [
-            RADIO_URL,
-            RADIO_URL.replace("/playlist.m3u8", ""), # Tenta o link '.../a'
-            RADIO_URL.replace("/a/playlist.m3u8", "/a") # Outra variação comum
-        ]
+        if resp.status_code >= 400:
+            # Tenta fallback se der erro
+            fallback_url = RADIO_URL.replace("/playlist.m3u8", "")
+            resp = await http_client.get(fallback_url, headers=headers)
 
-        resp = None
-        last_error = ""
-        
-        for url in urls_to_try:
-            try:
-                resp = await client.get(url, headers=headers)
-                if resp.status_code < 400:
-                    break
-                last_error = f"Erro {resp.status_code} em {url}"
-            except Exception as e:
-                last_error = str(e)
-                continue
-
-        if not resp or resp.status_code >= 400:
-            return Response(
-                content=f"Fonte indisponível: {last_error}", 
-                status_code=resp.status_code if resp else 500
-            )
+        if resp.status_code >= 400:
+            return Response(content=f"Erro na rádio: {resp.status_code}", status_code=resp.status_code)
 
         # Se for HLS
         if b"#EXTM3U" in resp.content[:100]:
@@ -67,8 +64,7 @@ async def proxy_master(request: Request):
             lines = content.splitlines()
             new_lines = []
             
-            # A base_url para links relativos agora é o diretório da playlist
-            # Ex: de .../a/playlist.m3u8 para .../a/
+            # Base URL real retornada pelo servidor
             current_url = str(resp.url)
             base_url = current_url.rsplit('/', 1)[0] + "/"
             
@@ -76,7 +72,6 @@ async def proxy_master(request: Request):
                 line = line.strip()
                 if line and not line.startswith("#"):
                     if not line.startswith("http"):
-                        # Resolve o link relativo de forma limpa
                         full_segment_url = base_url + line
                         new_lines.append(f"/stream/segment?url={full_segment_url}")
                     else:
@@ -90,55 +85,48 @@ async def proxy_master(request: Request):
                 headers={"Access-Control-Allow-Origin": "*", "Cache-Control": "no-cache"}
             )
         
-        # Se for stream direto (MP3/AAC)
+        # Stream Direto
         async def direct_streamer():
-            target_url = str(resp.url)
-            async with client.stream("GET", target_url, headers=headers) as s:
+            async with http_client.stream("GET", str(resp.url), headers=headers) as s:
                 async for chunk in s.aiter_bytes(chunk_size=16384):
                     yield chunk
 
         return StreamingResponse(
             direct_streamer(),
             media_type=resp.headers.get("content-type", "audio/mpeg"),
-            headers={
-                "Access-Control-Allow-Origin": "*",
-                "Accept-Ranges": "bytes",
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive"
-            }
+            headers={"Access-Control-Allow-Origin": "*", "Accept-Ranges": "bytes"}
         )
+    except Exception as e:
+        return Response(content=f"Erro: {str(e)}", status_code=500)
 
 @app.get("/stream/segment")
 async def proxy_segment(url: str, request: Request):
-    """Proxy para segmentos individuais com tratamento de erro 502"""
-    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "*/*"
-        }
-        
-        try:
-            # HEAD request primeiro para validar e pegar headers
-            resp_head = await client.head(url, headers=headers)
-            
-            async def generate_stream():
-                async with client.stream("GET", url, headers=headers) as resp:
-                    async for chunk in resp.aiter_bytes(chunk_size=8192):
-                        yield chunk
+    """Proxy otimizado para segmentos"""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "*/*"
+    }
+    
+    try:
+        # Iniciamos o stream diretamente para economizar tempo e evitar 502
+        async def generate_stream():
+            async with http_client.stream("GET", url, headers=headers) as resp:
+                async for chunk in resp.aiter_bytes(chunk_size=16384):
+                    yield chunk
 
-            return StreamingResponse(
-                generate_stream(),
-                status_code=resp_head.status_code,
-                media_type=resp_head.headers.get("content-type", "video/MP2T"),
-                headers={
-                    "Access-Control-Allow-Origin": "*",
-                    "Accept-Ranges": "bytes",
-                    "Cache-Control": "max-age=3600"
-                }
-            )
-        except Exception as e:
-            # Em vez de crashar (502), retornamos uma mensagem limpa
-            return Response(content=f"Erro no segmento: {str(e)}", status_code=404)
+        # Fazemos apenas uma requisição para pegar o tipo de conteúdo e iniciar o stream
+        # Nota: StreamingResponse aceita um gerador assíncrono
+        return StreamingResponse(
+            generate_stream(),
+            media_type="video/MP2T", # Padrão para segmentos HLS
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "max-age=3600"
+            }
+        )
+    except Exception as e:
+        return Response(content=str(e), status_code=404)
 
 # Servir arquivos estáticos do frontend (após o build)
 # Note: No Docker, vamos copiar o build do frontend para uma pasta acessível.

@@ -115,9 +115,10 @@ function App() {
 
   const togglePlay = () => {
     setErrorMessage('');
-    setDebugInfo('Botão Play pressionado');
+    addLog('Botão Play pressionado');
+    
     if (!player.current) {
-      setErrorMessage('Player não inicializado. Tente recarregar a página.');
+      setErrorMessage('Player não inicializado.');
       return;
     }
 
@@ -127,7 +128,11 @@ function App() {
     } else {
       setIsLoading(true);
       
-      // Tenta carregar sem forçar o tipo para permitir auto-detecção (HLS ou MP3)
+      // Limpa erros anteriores do Video.js para evitar o erro de 'undefined'
+      if (player.current.error()) {
+        player.current.error(null);
+      }
+
       player.current.src({ 
         src: STREAM_URL
       });
@@ -136,13 +141,13 @@ function App() {
       if (playPromise !== undefined) {
         playPromise
           .then(() => {
-            console.log("Reprodução HLS iniciada com sucesso");
+            addLog("Play iniciado");
           })
           .catch(error => {
             setIsLoading(false);
             if (error.name !== 'AbortError') {
-              console.error("Erro ao reproduzir:", error);
-              setErrorMessage("O navegador bloqueou o áudio. Tente clicar novamente.");
+              addLog(`Erro Play: ${error.message}`);
+              setErrorMessage("O navegador bloqueou o áudio.");
             }
           });
       }
