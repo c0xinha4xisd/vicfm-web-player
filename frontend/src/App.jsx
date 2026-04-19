@@ -195,11 +195,6 @@ function App() {
                 {errorMessage}
               </p>
             )}
-            {debugInfo && !errorMessage && !isPlaying && (
-              <p className="mt-2 text-[9px] text-neutral-500 italic">
-                {debugInfo}
-              </p>
-            )}
           </div>
         </div>
 
