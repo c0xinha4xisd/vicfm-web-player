@@ -31,8 +31,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# URL exata da rádio
-RADIO_URL = "http://45.224.108.166:1923/BZCWmdKZy2GZnJeYodiZ/a/playlist.m3u8"
+# URLs da rádio (Link 01 e Link 02)
+STREAMS = {
+    "link01": "http://45.224.108.166:1923/BZCWmdKZy2GZnJeYodiZ/720p/chunks.m3u8",
+    "link02": "http://45.224.108.166:1923/BZCWmdKZy2GZnJeYodiZ/a/playlist.m3u8"
+}
 
 @app.get("/api/health")
 def health_check():
@@ -40,23 +43,20 @@ def health_check():
 
 # Proxy de Áudio Universal
 @app.get("/stream/playlist.m3u8")
-async def proxy_master(request: Request):
-    """Busca o stream da rádio com reaproveitamento de conexão"""
+async def proxy_master(request: Request, server: str = "link02"):
+    """Busca o stream da rádio com suporte a múltiplos servidores"""
+    target_url = STREAMS.get(server, STREAMS["link02"])
+    
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "*/*"
     }
     
     try:
-        resp = await http_client.get(RADIO_URL, headers=headers)
+        resp = await http_client.get(target_url, headers=headers)
         
         if resp.status_code >= 400:
-            # Tenta fallback se der erro
-            fallback_url = RADIO_URL.replace("/playlist.m3u8", "")
-            resp = await http_client.get(fallback_url, headers=headers)
-
-        if resp.status_code >= 400:
-            return Response(content=f"Erro na rádio: {resp.status_code}", status_code=resp.status_code)
+            return Response(content=f"Erro no servidor {server}: {resp.status_code}", status_code=resp.status_code)
 
         # Se for HLS
         if b"#EXTM3U" in resp.content[:100]:

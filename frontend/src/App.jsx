@@ -19,17 +19,18 @@ function App() {
   const [volume, setVolume] = useState(0.8);
   const [isMuted, setIsMuted] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const [debugInfo, setDebugInfo] = useState('');
+  const [activeServer, setActiveServer] = useState('link02'); // link01 ou link02
   const [logs, setLogs] = useState([]);
 
   const addLog = (msg) => {
     const time = new Date().toLocaleTimeString();
     setLogs(prev => [`[${time}] ${msg}`, ...prev].slice(0, 10));
-    setDebugInfo(msg);
   };
   
   const videoNode = useRef(null);
   const player = useRef(null);
+
+  const getStreamUrl = (server) => `/stream/playlist.m3u8?server=${server}`;
 
   // Inicialização do Video.js
   useEffect(() => {
@@ -48,32 +49,30 @@ function App() {
           nativeVideoTracks: false
         },
         sources: [{
-          src: STREAM_URL,
+          src: getStreamUrl(activeServer),
           type: 'application/x-mpegURL'
         }]
       });
 
       player.current.on('error', () => {
         const error = player.current.error();
-        addLog(`Erro VideoJS: ${error ? error.code : '?'}`);
+        addLog(`Erro no Servidor ${activeServer === 'link01' ? '01' : '02'}`);
         
-        fetch(STREAM_URL)
+        const nextServer = activeServer === 'link01' ? 'link02' : 'link01';
+        
+        fetch(getStreamUrl(activeServer))
           .then(res => {
-            addLog(`Status Backend: ${res.status}`);
-            if (!res.ok) return res.text();
-            return null;
+            if (!res.ok && activeServer !== nextServer) {
+              addLog(`Tentando Servidor Reserva...`);
+              setActiveServer(nextServer);
+            }
+            return res.ok ? null : res.text();
           })
           .then(backendMsg => {
-            let msg = 'Erro ao carregar áudio.';
-            if (backendMsg) {
-              msg = backendMsg;
-              addLog(`Mensagem: ${backendMsg}`);
-            }
-            setErrorMessage(msg);
+            if (backendMsg) setErrorMessage(backendMsg);
           })
-          .catch(e => {
-            addLog(`Falha Fetch: ${e.message}`);
-            setErrorMessage('Erro de conexão com o servidor.');
+          .catch(() => {
+            if (activeServer !== nextServer) setActiveServer(nextServer);
           })
           .finally(() => {
             setIsPlaying(false);
@@ -115,7 +114,7 @@ function App() {
 
   const togglePlay = () => {
     setErrorMessage('');
-    addLog('Botão Play pressionado');
+    addLog(`Iniciando via Servidor ${activeServer === 'link01' ? '01' : '02'}`);
     
     if (!player.current) {
       setErrorMessage('Player não inicializado.');
@@ -128,26 +127,25 @@ function App() {
     } else {
       setIsLoading(true);
       
-      // Limpa erros anteriores do Video.js para evitar o erro de 'undefined'
       if (player.current.error()) {
         player.current.error(null);
       }
 
       player.current.src({ 
-        src: STREAM_URL
+        src: getStreamUrl(activeServer)
       });
       
       const playPromise = player.current.play();
       if (playPromise !== undefined) {
         playPromise
           .then(() => {
-            addLog("Play iniciado");
+            addLog("Play com sucesso");
           })
           .catch(error => {
             setIsLoading(false);
             if (error.name !== 'AbortError') {
-              addLog(`Erro Play: ${error.message}`);
-              setErrorMessage("O navegador bloqueou o áudio.");
+              addLog(`Erro: ${error.message}`);
+              setErrorMessage("Falha ao iniciar áudio.");
             }
           });
       }
@@ -224,24 +222,30 @@ function App() {
             )}
           </button>
 
-          {/* Botão de Emergência - Visível quando há erro ou o usuário quer o link direto */}
           <div className="flex flex-col items-center gap-4 animate-in fade-in zoom-in duration-500 mt-2">
-            <a 
-              href="http://45.224.108.166:1923/BZCWmdKZy2GZnJeYodiZ/a/playlist.m3u8" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className={`flex items-center gap-2 px-6 py-2.5 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all border ${
-                errorMessage 
-                  ? 'bg-red-500/10 border-red-500/20 text-red-500 hover:bg-red-500/20' 
-                  : 'bg-white/5 border-white/5 text-neutral-500 hover:bg-white/10 hover:text-white'
-              }`}
-            >
-              <ExternalLink size={14} className={errorMessage ? 'text-red-500' : 'text-neutral-500'} />
-              Link Direto (Alternativo)
-            </a>
+            <div className="flex gap-2">
+              <a 
+                href="http://45.224.108.166:1923/BZCWmdKZy2GZnJeYodiZ/720p/chunks.m3u8" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/5 rounded-full text-[9px] font-bold uppercase tracking-widest text-neutral-400 hover:bg-white/10 hover:text-white transition-all"
+              >
+                <ExternalLink size={12} />
+                Link 01
+              </a>
+              <a 
+                href="http://45.224.108.166:1923/BZCWmdKZy2GZnJeYodiZ/a/playlist.m3u8" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/5 rounded-full text-[9px] font-bold uppercase tracking-widest text-neutral-400 hover:bg-white/10 hover:text-white transition-all"
+              >
+                <ExternalLink size={12} />
+                Link 02
+              </a>
+            </div>
             {errorMessage && (
-              <p className="text-[9px] text-neutral-500 text-center max-w-[220px] leading-relaxed italic">
-                O player principal encontrou um problema. Use o link acima para abrir a rádio diretamente.
+              <p className="text-[9px] text-red-500/80 text-center max-w-[220px] leading-relaxed italic bg-red-500/5 px-4 py-2 rounded-lg border border-red-500/10">
+                Houve uma falha técnica no player. Tente um dos links diretos acima.
               </p>
             )}
           </div>
