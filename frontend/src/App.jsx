@@ -112,6 +112,39 @@ function App() {
     }
   }, [volume, isMuted]);
 
+  const switchServer = (server) => {
+    if (activeServer === server && isPlaying) return;
+    
+    addLog(`Trocando para ${server === 'link01' ? 'Servidor 01' : 'Servidor 02'}`);
+    setActiveServer(server);
+    setErrorMessage('');
+    setIsLoading(true);
+
+    if (player.current) {
+      player.current.pause();
+      player.current.src({ 
+        src: getStreamUrl(server),
+        type: 'application/x-mpegURL'
+      });
+      
+      const playPromise = player.current.play();
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            setIsPlaying(true);
+            addLog("Tocando via nova fonte");
+          })
+          .catch(error => {
+            setIsLoading(false);
+            if (error.name !== 'AbortError') {
+              addLog(`Erro na troca: ${error.message}`);
+              setErrorMessage("Falha ao carregar este servidor.");
+            }
+          });
+      }
+    }
+  };
+
   const togglePlay = () => {
     setErrorMessage('');
     addLog(`Iniciando via Servidor ${activeServer === 'link01' ? '01' : '02'}`);
@@ -219,28 +252,35 @@ function App() {
 
           <div className="flex flex-col items-center gap-4 animate-in fade-in zoom-in duration-500 mt-2">
             <div className="flex gap-2">
-              <a 
-                href="http://45.224.108.166:1923/BZCWmdKZy2GZnJeYodiZ/720p/chunks.m3u8" 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/5 rounded-full text-[9px] font-bold uppercase tracking-widest text-neutral-400 hover:bg-white/10 hover:text-white transition-all"
+              <button 
+                onClick={() => switchServer('link01')}
+                className={`flex items-center gap-2 px-4 py-2 border rounded-full text-[9px] font-bold uppercase tracking-widest transition-all ${
+                  activeServer === 'link01' 
+                    ? 'bg-red-500/20 border-red-500/40 text-red-500' 
+                    : 'bg-white/5 border-white/5 text-neutral-400 hover:bg-white/10 hover:text-white'
+                }`}
               >
-                <ExternalLink size={12} />
+                <Radio size={12} />
                 Link 01
-              </a>
-              <a 
-                href="http://45.224.108.166:1923/BZCWmdKZy2GZnJeYodiZ/a/playlist.m3u8" 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/5 rounded-full text-[9px] font-bold uppercase tracking-widest text-neutral-400 hover:bg-white/10 hover:text-white transition-all"
+              </button>
+              <button 
+                onClick={() => switchServer('link02')}
+                className={`flex items-center gap-2 px-4 py-2 border rounded-full text-[9px] font-bold uppercase tracking-widest transition-all ${
+                  activeServer === 'link02' 
+                    ? 'bg-red-500/20 border-red-500/40 text-red-500' 
+                    : 'bg-white/5 border-white/5 text-neutral-400 hover:bg-white/10 hover:text-white'
+                }`}
               >
-                <ExternalLink size={12} />
+                <Radio size={12} />
                 Link 02
-              </a>
+              </button>
             </div>
+            <p className="text-[8px] text-neutral-600 uppercase tracking-widest font-medium">
+              Escolha uma fonte se houver falha
+            </p>
             {errorMessage && (
               <p className="text-[9px] text-red-500/80 text-center max-w-[220px] leading-relaxed italic bg-red-500/5 px-4 py-2 rounded-lg border border-red-500/10">
-                Houve uma falha técnica no player. Tente um dos links diretos acima.
+                O player principal falhou. Tente o outro link acima.
               </p>
             )}
           </div>
