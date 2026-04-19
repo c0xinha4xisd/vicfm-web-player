@@ -17,7 +17,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# URL da rádio fornecida pelo usuário
+# URL da rádio
 RADIO_URL = "http://45.224.108.166:1923/BZCWmdKZy2GZnJeYodiZ/a"
 
 @app.get("/api/health")
@@ -29,49 +29,42 @@ def health_check():
 async def proxy_master(request: Request):
     """Busca o stream da rádio e decide se serve como HLS ou Stream Direto"""
     async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
-        # Headers mais completos para parecer um player real (VLC/Chrome)
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "audio/mpeg, audio/aac, application/vnd.apple.mpegurl, application/x-mpegURL, */*",
+            "Accept": "*/*",
             "Accept-Encoding": "identity",
-            "Connection": "keep-alive",
             "Icy-MetaData": "1"
         }
         
-        range_header = request.headers.get("range")
-        if range_header:
-            headers["Range"] = range_header
-
         try:
             # Tenta acessar a URL da rádio
             resp = await client.get(RADIO_URL, headers=headers)
             
-            # Se der 404, tenta adicionar uma barra no final (alguns servidores exigem)
-            if resp.status_code == 404 and not RADIO_URL.endswith('/'):
-                resp = await client.get(RADIO_URL + "/", headers=headers)
+            # Se der 404, tenta a variação com playlist.m3u8
+            if resp.status_code == 404:
+                resp = await client.get(f"{RADIO_URL}/playlist.m3u8", headers=headers)
 
             if resp.status_code >= 400:
-                # Se ainda der erro, o servidor da rádio pode estar bloqueando o IP do Render (EUA)
-                # ou exigindo algum parâmetro específico.
                 return Response(
-                    content=f"Fonte da rádio indisponível (Erro {resp.status_code}). Isso pode ocorrer se o servidor da rádio bloquear acessos de fora do Brasil.", 
+                    content=f"Fonte da rádio indisponível (Erro {resp.status_code}). O servidor da rádio pode estar bloqueando acessos de fora do Brasil ou o link mudou.", 
                     status_code=resp.status_code
                 )
 
-            content_type = resp.headers.get("content-type", "").lower()
-            
             # Se for HLS
             if b"#EXTM3U" in resp.content[:100]:
                 content = resp.text
                 lines = content.splitlines()
                 new_lines = []
-                # Define a base_url para links relativos
-                base_url = RADIO_URL if RADIO_URL.endswith('/') else f"{RADIO_URL}/"
+                
+                # A base_url para HLS deve ser o diretório pai do arquivo 'a'
+                # Se a URL é .../BZCWmdKZy2GZnJeYodiZ/a, a base é .../BZCWmdKZy2GZnJeYodiZ/
+                base_url = RADIO_URL.rsplit('/', 1)[0] + "/"
                 
                 for line in lines:
                     line = line.strip()
                     if line and not line.startswith("#"):
                         if not line.startswith("http"):
+                            # Tenta montar o link relativo ao pai
                             new_lines.append(f"/stream/segment?url={base_url}{line}")
                         else:
                             new_lines.append(f"/stream/segment?url={line}")
@@ -87,23 +80,22 @@ async def proxy_master(request: Request):
             # Se for stream direto (MP3/AAC)
             async def direct_streamer():
                 async with client.stream("GET", RADIO_URL, headers=headers) as s:
-                    async for chunk in s.aiter_bytes(chunk_size=16384): # Buffer maior para estabilidade
+                    async for chunk in s.aiter_bytes(chunk_size=16384):
                         yield chunk
 
             return StreamingResponse(
                 direct_streamer(),
-                media_type=content_type or "audio/mpeg",
+                media_type=resp.headers.get("content-type", "audio/mpeg"),
                 headers={
                     "Access-Control-Allow-Origin": "*",
                     "Accept-Ranges": "bytes",
                     "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "X-Content-Type-Options": "nosniff"
+                    "Connection": "keep-alive"
                 }
             )
             
         except Exception as e:
-            return Response(content=f"Erro de conexão com a rádio: {str(e)}", status_code=500)
+            return Response(content=f"Erro de conexão: {str(e)}", status_code=500)
 
 @app.get("/stream/segment")
 async def proxy_segment(url: str, request: Request):

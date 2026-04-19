@@ -216,6 +216,23 @@ function App() {
             )}
           </button>
 
+          {errorMessage && (
+            <div className="flex flex-col items-center gap-4 animate-in fade-in zoom-in duration-300">
+              <a 
+                href="http://45.224.108.166:1923/BZCWmdKZy2GZnJeYodiZ/a" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all border border-white/5"
+              >
+                <ExternalLink size={14} className="text-red-500" />
+                Tentar Link Direto
+              </a>
+              <p className="text-[9px] text-neutral-500 text-center max-w-[200px] leading-relaxed italic">
+                Nota: O link direto abrirá em uma nova aba. Use esta opção se o player principal não carregar.
+              </p>
+            </div>
+          )}
+
           <div className="w-full flex items-center gap-4 px-4">
             <button onClick={toggleMute} className="text-neutral-400 hover:text-white transition-colors">
               {isMuted || volume === 0 ? <VolumeX size={20} /> : <Volume2 size={20} />}
