@@ -49,15 +49,30 @@ function App() {
       player.current.on('error', () => {
         const error = player.current.error();
         console.error('Video.js Error:', error);
-        let msg = 'Erro ao carregar áudio.';
-        if (error) {
-          if (error.code === 4) msg = 'Formato de áudio não suportado ou link quebrado.';
-          else if (error.code === 2) msg = 'Erro de rede ao carregar a rádio.';
-          else msg = `Erro: ${error.message}`;
-        }
-        setErrorMessage(msg);
-        setIsPlaying(false);
-        setIsLoading(false);
+        
+        // Tenta capturar a mensagem do nosso backend se possível
+        fetch(STREAM_URL)
+          .then(res => {
+            if (!res.ok) return res.text();
+            return null;
+          })
+          .then(backendMsg => {
+            let msg = 'Erro ao carregar áudio.';
+            if (backendMsg) {
+              msg = backendMsg;
+            } else if (error) {
+              if (error.code === 4) msg = 'Formato não suportado ou rádio offline.';
+              else if (error.code === 2) msg = 'Erro de rede. Verifique sua conexão.';
+            }
+            setErrorMessage(msg);
+          })
+          .catch(() => {
+            setErrorMessage('Erro de conexão com o servidor do player.');
+          })
+          .finally(() => {
+            setIsPlaying(false);
+            setIsLoading(false);
+          });
       });
 
       player.current.on('waiting', () => {
