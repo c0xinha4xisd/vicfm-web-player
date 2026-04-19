@@ -49,7 +49,13 @@ function App() {
       player.current.on('error', () => {
         const error = player.current.error();
         console.error('Video.js Error:', error);
-        setErrorMessage(`Erro ao carregar áudio: ${error ? error.message : 'Desconhecido'}`);
+        let msg = 'Erro ao carregar áudio.';
+        if (error) {
+          if (error.code === 4) msg = 'Formato de áudio não suportado ou link quebrado.';
+          else if (error.code === 2) msg = 'Erro de rede ao carregar a rádio.';
+          else msg = `Erro: ${error.message}`;
+        }
+        setErrorMessage(msg);
         setIsPlaying(false);
         setIsLoading(false);
       });
