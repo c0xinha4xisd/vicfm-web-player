@@ -19,7 +19,7 @@ function App() {
   const [volume, setVolume] = useState(0.8);
   const [isMuted, setIsMuted] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const [activeServer, setActiveServer] = useState('link02'); // link01 ou link02
+  const [activeServer, setActiveServer] = useState('link01'); // Inicia com o link01 que você disse estar perfeito
   const [logs, setLogs] = useState([]);
 
   const addLog = (msg) => {

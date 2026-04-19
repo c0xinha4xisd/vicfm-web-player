@@ -43,9 +43,9 @@ def health_check():
 
 # Proxy de Áudio Universal
 @app.get("/stream/playlist.m3u8")
-async def proxy_master(request: Request, server: str = "link02"):
-    """Busca o stream da rádio com suporte a múltiplos servidores"""
-    target_url = STREAMS.get(server, STREAMS["link02"])
+async def proxy_master(request: Request, server: str = "link01"):
+    """Busca o stream da rádio com suporte a múltiplos servidores e correção de base_url"""
+    target_url = STREAMS.get(server, STREAMS["link01"])
     
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -64,14 +64,16 @@ async def proxy_master(request: Request, server: str = "link02"):
             lines = content.splitlines()
             new_lines = []
             
-            # Base URL real retornada pelo servidor
-            current_url = str(resp.url)
-            base_url = current_url.rsplit('/', 1)[0] + "/"
+            # Base URL real retornada pelo servidor (fundamental para o Link 02)
+            # O Link 02 tem uma estrutura diferente do Link 01
+            current_resp_url = str(resp.url)
+            base_url = current_resp_url.rsplit('/', 1)[0] + "/"
             
             for line in lines:
                 line = line.strip()
                 if line and not line.startswith("#"):
                     if not line.startswith("http"):
+                        # Resolve o link relativo com base na URL de onde a playlist veio
                         full_segment_url = base_url + line
                         new_lines.append(f"/stream/segment?url={full_segment_url}")
                     else:
