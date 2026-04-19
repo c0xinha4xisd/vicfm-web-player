@@ -27,75 +27,85 @@ def health_check():
 # Proxy de Áudio Universal
 @app.get("/stream/playlist.m3u8")
 async def proxy_master(request: Request):
-    """Busca o stream da rádio e decide se serve como HLS ou Stream Direto"""
+    """Busca o stream da rádio com múltiplas tentativas de URL"""
     async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "*/*",
-            "Accept-Encoding": "identity",
             "Icy-MetaData": "1"
         }
         
-        try:
-            # Tenta acessar a URL da rádio
-            resp = await client.get(RADIO_URL, headers=headers)
-            
-            # Se der 404, tenta a variação com playlist.m3u8
-            if resp.status_code == 404:
-                resp = await client.get(f"{RADIO_URL}/playlist.m3u8", headers=headers)
+        # Lista de URLs para tentar em ordem
+        urls_to_try = [
+            RADIO_URL,
+            f"{RADIO_URL}/playlist.m3u8",
+            f"{RADIO_URL}/index.m3u8",
+            RADIO_URL.rstrip('/') + "/a" # Caso o 'a' tenha sido removido por engano
+        ]
 
-            if resp.status_code >= 400:
-                return Response(
-                    content=f"Fonte da rádio indisponível (Erro {resp.status_code}). O servidor da rádio pode estar bloqueando acessos de fora do Brasil ou o link mudou.", 
-                    status_code=resp.status_code
-                )
+        resp = None
+        last_error = ""
+        
+        for url in urls_to_try:
+            try:
+                print(f"DEBUG: Tentando URL: {url}")
+                resp = await client.get(url, headers=headers)
+                if resp.status_code < 400:
+                    break # Sucesso!
+                last_error = f"Erro {resp.status_code} em {url}"
+            except Exception as e:
+                last_error = str(e)
+                continue
 
-            # Se for HLS
-            if b"#EXTM3U" in resp.content[:100]:
-                content = resp.text
-                lines = content.splitlines()
-                new_lines = []
-                
-                # A base_url para HLS deve ser o diretório pai do arquivo 'a'
-                # Se a URL é .../BZCWmdKZy2GZnJeYodiZ/a, a base é .../BZCWmdKZy2GZnJeYodiZ/
-                base_url = RADIO_URL.rsplit('/', 1)[0] + "/"
-                
-                for line in lines:
-                    line = line.strip()
-                    if line and not line.startswith("#"):
-                        if not line.startswith("http"):
-                            # Tenta montar o link relativo ao pai
-                            new_lines.append(f"/stream/segment?url={base_url}{line}")
-                        else:
-                            new_lines.append(f"/stream/segment?url={line}")
-                    else:
-                        new_lines.append(line)
-                
-                return Response(
-                    content="\n".join(new_lines),
-                    media_type="application/vnd.apple.mpegurl",
-                    headers={"Access-Control-Allow-Origin": "*", "Cache-Control": "no-cache"}
-                )
-            
-            # Se for stream direto (MP3/AAC)
-            async def direct_streamer():
-                async with client.stream("GET", RADIO_URL, headers=headers) as s:
-                    async for chunk in s.aiter_bytes(chunk_size=16384):
-                        yield chunk
-
-            return StreamingResponse(
-                direct_streamer(),
-                media_type=resp.headers.get("content-type", "audio/mpeg"),
-                headers={
-                    "Access-Control-Allow-Origin": "*",
-                    "Accept-Ranges": "bytes",
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive"
-                }
+        if not resp or resp.status_code >= 400:
+            return Response(
+                content=f"Fonte da rádio indisponível. Detalhes: {last_error}. O servidor da rádio pode estar bloqueando acessos de fora do Brasil.", 
+                status_code=resp.status_code if resp else 500
             )
+
+        # Se for HLS
+        if b"#EXTM3U" in resp.content[:100]:
+            content = resp.text
+            lines = content.splitlines()
+            new_lines = []
             
-        except Exception as e:
-            return Response(content=f"Erro de conexão: {str(e)}", status_code=500)
+            # A base_url para HLS deve ser o diretório do arquivo atual
+            base_url = RADIO_URL.rsplit('/', 1)[0] + "/"
+            
+            for line in lines:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    if not line.startswith("http"):
+                        new_lines.append(f"/stream/segment?url={base_url}{line}")
+                    else:
+                        new_lines.append(f"/stream/segment?url={line}")
+                else:
+                    new_lines.append(line)
+            
+            return Response(
+                content="\n".join(new_lines),
+                media_type="application/vnd.apple.mpegurl",
+                headers={"Access-Control-Allow-Origin": "*", "Cache-Control": "no-cache"}
+            )
+        
+        # Se for stream direto (MP3/AAC)
+        async def direct_streamer():
+            # Usa a URL que funcionou no loop acima
+            target_url = resp.url if resp else RADIO_URL
+            async with client.stream("GET", target_url, headers=headers) as s:
+                async for chunk in s.aiter_bytes(chunk_size=16384):
+                    yield chunk
+
+        return StreamingResponse(
+            direct_streamer(),
+            media_type=resp.headers.get("content-type", "audio/mpeg"),
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive"
+            }
+        )
 
 @app.get("/stream/segment")
 async def proxy_segment(url: str, request: Request):

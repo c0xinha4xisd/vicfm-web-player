@@ -20,6 +20,13 @@ function App() {
   const [isMuted, setIsMuted] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [debugInfo, setDebugInfo] = useState('');
+  const [logs, setLogs] = useState([]);
+
+  const addLog = (msg) => {
+    const time = new Date().toLocaleTimeString();
+    setLogs(prev => [`[${time}] ${msg}`, ...prev].slice(0, 10));
+    setDebugInfo(msg);
+  };
   
   const videoNode = useRef(null);
   const player = useRef(null);
@@ -48,11 +55,11 @@ function App() {
 
       player.current.on('error', () => {
         const error = player.current.error();
-        console.error('Video.js Error:', error);
+        addLog(`Erro VideoJS: ${error ? error.code : '?'}`);
         
-        // Tenta capturar a mensagem do nosso backend se possível
         fetch(STREAM_URL)
           .then(res => {
+            addLog(`Status Backend: ${res.status}`);
             if (!res.ok) return res.text();
             return null;
           })
@@ -60,14 +67,13 @@ function App() {
             let msg = 'Erro ao carregar áudio.';
             if (backendMsg) {
               msg = backendMsg;
-            } else if (error) {
-              if (error.code === 4) msg = 'Formato não suportado ou rádio offline.';
-              else if (error.code === 2) msg = 'Erro de rede. Verifique sua conexão.';
+              addLog(`Mensagem: ${backendMsg}`);
             }
             setErrorMessage(msg);
           })
-          .catch(() => {
-            setErrorMessage('Erro de conexão com o servidor do player.');
+          .catch(e => {
+            addLog(`Falha Fetch: ${e.message}`);
+            setErrorMessage('Erro de conexão com o servidor.');
           })
           .finally(() => {
             setIsPlaying(false);
@@ -76,23 +82,20 @@ function App() {
       });
 
       player.current.on('waiting', () => {
-        console.log('Player está aguardando buffer...');
+        addLog('Aguardando buffer...');
         setIsLoading(true);
       });
 
       player.current.on('playing', () => {
+        addLog('Tocando agora!');
         setErrorMessage('');
         setIsLoading(false);
         setIsPlaying(true);
       });
 
-      player.current.on('canplay', () => {
-        setIsLoading(false);
-      });
-
       player.current.on('loadstart', () => {
         setIsLoading(true);
-        setDebugInfo('Iniciando carregamento...');
+        addLog('Iniciando carga...');
       });
     }
 
@@ -249,11 +252,26 @@ function App() {
           </div>
         </div>
 
-        <div className="mt-10 flex gap-6 text-neutral-500">
-          <a href="#" className="hover:text-red-500 transition-colors"><Globe size={18} /></a>
-          <a href="#" className="hover:text-red-500 transition-colors"><MessageCircle size={18} /></a>
-          <a href="#" className="hover:text-red-500 transition-colors"><Share2 size={18} /></a>
-          <a href="#" className="hover:text-red-500 transition-colors"><ExternalLink size={18} /></a>
+        <div className="mt-10 flex flex-col items-center gap-6 w-full">
+          <div className="flex gap-6 text-neutral-500">
+            <a href="#" className="hover:text-red-500 transition-colors"><Globe size={18} /></a>
+            <a href="#" className="hover:text-red-500 transition-colors"><MessageCircle size={18} /></a>
+            <a href="#" className="hover:text-red-500 transition-colors"><Share2 size={18} /></a>
+            <a href="#" className="hover:text-red-500 transition-colors"><ExternalLink size={18} /></a>
+          </div>
+          
+          {logs.length > 0 && (
+            <div className="w-full bg-black/20 rounded-xl p-3 border border-white/5 overflow-hidden">
+              <p className="text-[8px] text-neutral-600 uppercase font-bold mb-2 tracking-widest">Logs de Sistema</p>
+              <div className="max-h-24 overflow-y-auto space-y-1 flex flex-col-reverse">
+                {logs.map((log, i) => (
+                  <p key={i} className="text-[9px] font-mono text-neutral-500 border-l border-red-500/30 pl-2">
+                    {log}
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
       </div>
