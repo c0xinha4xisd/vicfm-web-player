@@ -20,6 +20,7 @@ function App() {
   const [isMuted, setIsMuted] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [logs, setLogs] = useState([]);
+  const [activeListeners, setActiveListeners] = useState(null);
 
   const addLog = (msg) => {
     const time = new Date().toLocaleTimeString();
@@ -28,11 +29,17 @@ function App() {
   
   const videoNode = useRef(null);
   const player = useRef(null);
+  const listenerIdRef = useRef(null);
 
   const getStreamUrl = () => '/stream/playlist.m3u8?server=link01';
 
   // Inicialização do Video.js
   useEffect(() => {
+    const existingId = sessionStorage.getItem('vicfm_listener_id');
+    const listenerId = existingId ?? (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    sessionStorage.setItem('vicfm_listener_id', listenerId);
+    listenerIdRef.current = listenerId;
+
     if (videoNode.current) {
       player.current = videojs(videoNode.current, {
         autoplay: false,
@@ -104,6 +111,64 @@ function App() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    const updateCount = () => {
+      fetch('/api/listeners')
+        .then(res => (res.ok ? res.json() : null))
+        .then(data => {
+          if (data && typeof data.active === 'number') setActiveListeners(data.active);
+        })
+        .catch(() => {});
+    };
+
+    updateCount();
+    const intervalId = setInterval(updateCount, 10000);
+    return () => clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
+    const listenerId = listenerIdRef.current;
+    if (!listenerId) return;
+
+    const ping = () =>
+      fetch('/api/listeners/ping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: listenerId, playing: true }),
+        keepalive: true
+      })
+        .then(res => (res.ok ? res.json() : null))
+        .then(data => {
+          if (data && typeof data.active === 'number') setActiveListeners(data.active);
+        })
+        .catch(() => {});
+
+    const stop = () =>
+      fetch('/api/listeners/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: listenerId }),
+        keepalive: true
+      })
+        .then(res => (res.ok ? res.json() : null))
+        .then(data => {
+          if (data && typeof data.active === 'number') setActiveListeners(data.active);
+        })
+        .catch(() => {});
+
+    if (!isPlaying) {
+      stop();
+      return;
+    }
+
+    ping();
+    const intervalId = setInterval(ping, 15000);
+    return () => {
+      clearInterval(intervalId);
+      stop();
+    };
+  }, [isPlaying]);
 
   // Sincronizar volume
   useEffect(() => {
@@ -190,6 +255,12 @@ function App() {
                 {isLoading ? 'Carregando...' : (isPlaying ? 'Ao Vivo Agora' : 'Sintonize')}
               </p>
             </div>
+            <p className="text-[10px] text-neutral-500 font-medium">
+              Carregamento pode levar alguns segundos
+            </p>
+            <p className="text-[10px] text-neutral-600 font-medium">
+              {activeListeners === null ? 'Ouvintes agora: —' : `Ouvintes agora: ${activeListeners}`}
+            </p>
             {errorMessage && (
               <p className="mt-2 text-[10px] text-red-500 font-medium bg-red-500/10 px-3 py-1 rounded-full border border-red-500/20">
                 {errorMessage}

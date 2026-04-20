@@ -2,10 +2,12 @@ from fastapi import FastAPI, Response, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import os
 import httpx
 import re
 import asyncio
+import time
 from contextlib import asynccontextmanager
 
 # Cliente HTTP Global para reutilizar conexões e evitar erros 502/Timeout
@@ -37,9 +39,52 @@ STREAMS = {
     "link02": "http://45.224.108.166:1923/BZCWmdKZy2GZnJeYodiZ/a/playlist.m3u8"
 }
 
+class ListenerPing(BaseModel):
+    id: str
+    playing: bool = True
+
+class ListenerStop(BaseModel):
+    id: str
+
+listeners_lock = asyncio.Lock()
+listeners_state: dict[str, dict[str, object]] = {}
+
+async def get_active_listeners() -> int:
+    now = time.time()
+    async with listeners_lock:
+        stale_ids = [
+            listener_id
+            for listener_id, state in listeners_state.items()
+            if now - float(state.get("last_seen", 0.0)) > 45.0
+        ]
+        for listener_id in stale_ids:
+            listeners_state.pop(listener_id, None)
+
+        return sum(1 for state in listeners_state.values() if bool(state.get("playing", False)))
+
 @app.get("/api/health")
 def health_check():
     return {"status": "ok", "radio": "VICFM 91.5"}
+
+@app.get("/api/listeners")
+async def listeners_count():
+    return {"active": await get_active_listeners()}
+
+@app.post("/api/listeners/ping")
+async def listeners_ping(payload: ListenerPing):
+    now = time.time()
+    async with listeners_lock:
+        listeners_state[payload.id] = {"last_seen": now, "playing": payload.playing}
+    return {"active": await get_active_listeners()}
+
+@app.post("/api/listeners/stop")
+async def listeners_stop(payload: ListenerStop):
+    async with listeners_lock:
+        state = listeners_state.get(payload.id)
+        if state is not None:
+            state["playing"] = False
+            state["last_seen"] = time.time()
+    return {"active": await get_active_listeners()}
 
 # Proxy de Áudio Universal
 @app.get("/stream/playlist.m3u8")
