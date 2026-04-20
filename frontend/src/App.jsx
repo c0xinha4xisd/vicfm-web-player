@@ -170,6 +170,17 @@ function App() {
     };
   }, [isPlaying]);
 
+  useEffect(() => {
+    if (!isPlaying) return;
+
+    const ping = () =>
+      fetch('/api/health', { cache: 'no-store', keepalive: true }).catch(() => {});
+
+    ping();
+    const intervalId = setInterval(ping, 240000);
+    return () => clearInterval(intervalId);
+  }, [isPlaying]);
+
   // Sincronizar volume
   useEffect(() => {
     if (player.current) {
