@@ -19,7 +19,6 @@ function App() {
   const [volume, setVolume] = useState(0.8);
   const [isMuted, setIsMuted] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const [activeServer, setActiveServer] = useState('link01'); // Inicia com o link01 que você disse estar perfeito
   const [logs, setLogs] = useState([]);
 
   const addLog = (msg) => {
@@ -30,7 +29,7 @@ function App() {
   const videoNode = useRef(null);
   const player = useRef(null);
 
-  const getStreamUrl = (server) => `/stream/playlist.m3u8?server=${server}`;
+  const getStreamUrl = () => '/stream/playlist.m3u8?server=link01';
 
   // Inicialização do Video.js
   useEffect(() => {
@@ -49,31 +48,23 @@ function App() {
           nativeVideoTracks: false
         },
         sources: [{
-          src: getStreamUrl(activeServer),
+          src: getStreamUrl(),
           type: 'application/x-mpegURL'
         }]
       });
 
       player.current.on('error', () => {
         const error = player.current.error();
-        addLog(`Erro no Servidor ${activeServer === 'link01' ? '01' : '02'}`);
-        
-        const nextServer = activeServer === 'link01' ? 'link02' : 'link01';
-        
-        fetch(getStreamUrl(activeServer))
+        addLog(`Erro no stream: ${error?.message ?? 'desconhecido'}`);
+
+        fetch(getStreamUrl())
           .then(res => {
-            if (!res.ok && activeServer !== nextServer) {
-              addLog(`Tentando Servidor Reserva...`);
-              setActiveServer(nextServer);
-            }
             return res.ok ? null : res.text();
           })
           .then(backendMsg => {
             if (backendMsg) setErrorMessage(backendMsg);
           })
-          .catch(() => {
-            if (activeServer !== nextServer) setActiveServer(nextServer);
-          })
+          .catch(() => {})
           .finally(() => {
             setIsPlaying(false);
             setIsLoading(false);
@@ -96,6 +87,15 @@ function App() {
         setIsLoading(true);
         addLog('Iniciando carga...');
       });
+
+      setIsLoading(true);
+      const playPromise = player.current.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(() => {
+          setIsLoading(false);
+          addLog('Toque em Link 01 para iniciar.');
+        });
+      }
     }
 
     return () => {
@@ -112,42 +112,9 @@ function App() {
     }
   }, [volume, isMuted]);
 
-  const switchServer = (server) => {
-    if (activeServer === server && isPlaying) return;
-    
-    addLog(`Trocando para ${server === 'link01' ? 'Servidor 01' : 'Servidor 02'}`);
-    setActiveServer(server);
-    setErrorMessage('');
-    setIsLoading(true);
-
-    if (player.current) {
-      player.current.pause();
-      player.current.src({ 
-        src: getStreamUrl(server),
-        type: 'application/x-mpegURL'
-      });
-      
-      const playPromise = player.current.play();
-      if (playPromise !== undefined) {
-        playPromise
-          .then(() => {
-            setIsPlaying(true);
-            addLog("Tocando via nova fonte");
-          })
-          .catch(error => {
-            setIsLoading(false);
-            if (error.name !== 'AbortError') {
-              addLog(`Erro na troca: ${error.message}`);
-              setErrorMessage("Falha ao carregar este servidor.");
-            }
-          });
-      }
-    }
-  };
-
   const togglePlay = () => {
     setErrorMessage('');
-    addLog(`Iniciando via Servidor ${activeServer === 'link01' ? '01' : '02'}`);
+    addLog('Iniciando via Link 01');
     
     if (!player.current) {
       setErrorMessage('Player não inicializado.');
@@ -165,7 +132,7 @@ function App() {
       }
 
       player.current.src({ 
-        src: getStreamUrl(activeServer)
+        src: getStreamUrl()
       });
       
       const playPromise = player.current.play();
@@ -232,57 +199,28 @@ function App() {
         </div>
 
         <div className="w-full flex flex-col items-center gap-8">
-          <button 
-            onClick={togglePlay}
-            disabled={isLoading}
-            className={`group relative w-24 h-24 rounded-full flex items-center justify-center transition-all duration-500 ${
-              isPlaying 
-                ? 'bg-neutral-800 text-white hover:bg-neutral-700 shadow-[0_0_30px_rgba(0,0,0,0.3)]' 
-                : 'bg-red-600 text-white hover:bg-red-500 hover:scale-105 shadow-[0_0_50px_rgba(220,38,38,0.3)]'
-            } ${isLoading ? 'opacity-50 cursor-wait' : 'cursor-pointer'}`}
-          >
-            {isLoading ? (
-              <div className="w-8 h-8 border-4 border-white/20 border-t-white rounded-full animate-spin"></div>
-            ) : isPlaying ? (
-              <Pause className="w-10 h-10 fill-current" />
-            ) : (
-              <Play className="w-10 h-10 fill-current translate-x-1" />
-            )}
-          </button>
-
           <div className="flex flex-col items-center gap-4 animate-in fade-in zoom-in duration-500 mt-2">
             <div className="flex gap-2">
               <button 
-                onClick={() => switchServer('link01')}
-                className={`flex items-center gap-2 px-4 py-2 border rounded-full text-[9px] font-bold uppercase tracking-widest transition-all ${
-                  activeServer === 'link01' 
-                    ? 'bg-red-500/20 border-red-500/40 text-red-500' 
-                    : 'bg-white/5 border-white/5 text-neutral-400 hover:bg-white/10 hover:text-white'
-                }`}
+                onClick={togglePlay}
+                disabled={isLoading}
+                className={`flex items-center justify-center gap-3 px-6 py-4 border rounded-full text-[11px] font-bold uppercase tracking-widest transition-all ${
+                  isPlaying
+                    ? 'bg-neutral-800 border-white/5 text-white hover:bg-neutral-700'
+                    : 'bg-red-600 border-red-500/40 text-white hover:bg-red-500'
+                } ${isLoading ? 'opacity-50 cursor-wait' : 'cursor-pointer'}`}
               >
-                <Radio size={12} />
+                {isLoading ? (
+                  <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
+                ) : isPlaying ? (
+                  <Pause className="w-4 h-4 fill-current" />
+                ) : (
+                  <Play className="w-4 h-4 fill-current translate-x-0.5" />
+                )}
+                <Radio size={14} />
                 Link 01
               </button>
-              <button 
-                onClick={() => switchServer('link02')}
-                className={`flex items-center gap-2 px-4 py-2 border rounded-full text-[9px] font-bold uppercase tracking-widest transition-all ${
-                  activeServer === 'link02' 
-                    ? 'bg-red-500/20 border-red-500/40 text-red-500' 
-                    : 'bg-white/5 border-white/5 text-neutral-400 hover:bg-white/10 hover:text-white'
-                }`}
-              >
-                <Radio size={12} />
-                Link 02
-              </button>
             </div>
-            <p className="text-[8px] text-neutral-600 uppercase tracking-widest font-medium">
-              Escolha uma fonte se houver falha
-            </p>
-            {errorMessage && (
-              <p className="text-[9px] text-red-500/80 text-center max-w-[220px] leading-relaxed italic bg-red-500/5 px-4 py-2 rounded-lg border border-red-500/10">
-                O player principal falhou. Tente o outro link acima.
-              </p>
-            )}
           </div>
 
           <div className="w-full flex items-center gap-4 px-4">
