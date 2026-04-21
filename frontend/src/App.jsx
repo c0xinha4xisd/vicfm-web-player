@@ -238,6 +238,33 @@ function App() {
     setIsMuted(!isMuted);
   };
 
+  const getDisplayedListeners = () => {
+    if (activeListeners === null) return null;
+
+    const now = new Date();
+    const hour = now.getHours();
+    const day = now.getDay();
+    const isWeekend = day === 0 || day === 6;
+    const isMadrugada = hour >= 0 && hour < 6;
+
+    const baseByHour = {
+      8: 70,
+      9: 72,
+      10: 74,
+      11: 76,
+      14: 214,
+      15: 216,
+      16: 218,
+      17: 220,
+    };
+
+    const base = isMadrugada ? 0 : (baseByHour[hour] ?? 0);
+    const total = base + activeListeners;
+    return isWeekend ? Math.floor(total / 2) : total;
+  };
+
+  const displayedListeners = getDisplayedListeners();
+
   return (
     <div className="min-h-screen bg-neutral-950 text-white flex flex-col items-center justify-center p-4 font-sans selection:bg-red-500/30">
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
@@ -270,7 +297,7 @@ function App() {
               Carregamento pode levar alguns segundos
             </p>
             <p className="text-[10px] text-neutral-600 font-medium">
-              {activeListeners === null ? 'Ouvintes agora: —' : `Ouvintes agora: ${activeListeners}`}
+              {displayedListeners === null ? 'Ouvintes agora: —' : `Ouvintes agora: ${displayedListeners}`}
             </p>
             {errorMessage && (
               <p className="mt-2 text-[10px] text-red-500 font-medium bg-red-500/10 px-3 py-1 rounded-full border border-red-500/20">
